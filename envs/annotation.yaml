@@ -1,0 +1,10 @@
+name: assembly
+channels:
+ - conda-forge
+ - bioconda
+ - defaults
+dependencies:
+ - pyrodigal=3.6.3.post1
+ - hmmer=3.4
+ - seqtk=1.5
+ - seqkit=0.8.1

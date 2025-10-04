@@ -1,0 +1,27 @@
+### Python modules
+import os, re
+from pathlib import Path
+
+### Configuration
+configfile: "../config/config.yaml"
+
+# Directories
+ENV_DIR = srcdir("../envs")
+READS_DIR = config["reads_dir"]
+ASSEMBLY_DIR = config["assembly_dir"]
+RESULTS_DIR = config["results_dir"]
+
+# Samples
+SAMPLES = list(glob_wildcards(os.path.join(ASSEMBLY_DIR, "{sample}.fa")))[0]
+
+### Rules to include
+# Function to recursively include all .smk files
+def include_smk_files(directory):
+    for root, _, files in os.walk(directory):
+        files.sort()
+        for file in files:
+            if file.endswith('.smk'):
+                include: os.path.join(root, file)
+
+# Include all .smk files from the rules directory and subdirectories
+include_smk_files('rules/')
