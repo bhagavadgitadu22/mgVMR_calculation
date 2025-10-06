@@ -1,3 +1,35 @@
+# 0. Unzip inputs
+rule unzip_assembly:
+    input:
+        fa=lambda wildcards: next(
+            f for f in [
+                os.path.join(ASSEMBLY_DIR, f"{wildcards.sample}.fa.gz"),
+                os.path.join(ASSEMBLY_DIR, f"{wildcards.sample}.fna.gz"),
+                os.path.join(ASSEMBLY_DIR, f"{wildcards.sample}.fasta.gz")
+            ] if os.path.exists(f)
+        )
+    output: fa=os.path.join(ASSEMBLY_DIR, "{sample}.fna")
+    shell:
+        "gunzip -c {input.fa} > {output.fa}"
+
+rule normalize_extension_assembly:
+    input:
+        lambda wildcards: next(
+            f for f in [
+                os.path.join(ASSEMBLY_DIR, f"{wildcards.sample}.fa"),
+                os.path.join(ASSEMBLY_DIR, f"{wildcards.sample}.fasta")
+            ] if os.path.exists(f)
+        )
+    output: os.path.join(ASSEMBLY_DIR, "{sample}.fna")
+    shell:
+        "cp {input} {output}"
+
+rule unzip_reads:
+    input: os.path.join(READS_DIR, "{sample}_{number}.fastq.gz")
+    output: os.path.join(READS_DIR, "{sample}_{number}.fastq")
+    shell:
+        "gunzip -c {input} > {output}"
+
 # 1. Protein prediction
 rule pyrodigal:
     input:
@@ -73,77 +105,43 @@ rule filter_best_mcp:
         ' {output.all_ids} > {output.ids}
         """
 
-rule extract_sequences_uscg:
+rule extract_sequences_marker:
     input:
         genes=os.path.join(RESULTS_DIR, "genes/genes_{sample}.fna"),
-        ids=os.path.join(RESULTS_DIR, "hmm/uscg_hits_{sample}_ids.txt")
+        ids=os.path.join(RESULTS_DIR, "hmm/{marker}_hits_{sample}_ids.txt")
     output:
-        fna=os.path.join(RESULTS_DIR, "hmm_sequences/uscg_genes_{sample}.fna")
-    conda: os.path.join(ENV_DIR, "annotation.yaml")
-    shell:
-        "seqtk subseq {input.genes} {input.ids} | seqkit rmdup -n - > {output.fna}"
-
-rule extract_sequences_mcp:
-    input:
-        genes=os.path.join(RESULTS_DIR, "genes/genes_{sample}.fna"),
-        ids=os.path.join(RESULTS_DIR, "hmm/mcp_hits_{sample}_ids.txt")
-    output:
-        fna=os.path.join(RESULTS_DIR, "hmm_sequences/mcp_genes_{sample}.fna")
+        fna=os.path.join(RESULTS_DIR, "hmm_sequences/{marker}_genes_{sample}.fna")
     conda: os.path.join(ENV_DIR, "annotation.yaml")
     shell:
         "seqtk subseq {input.genes} {input.ids} | seqkit rmdup -n - > {output.fna}"
 
 # 4. Subsample reads and map to extracted genes
-rule subsample_reads_r1:
+rule subsample_reads:
     input:
-        fq=os.path.join(READS_DIR, "{sample}_R1.fastq")
+        fq=os.path.join(READS_DIR, "{sample}_{number}.fastq")
     output:
-        fq_sub=os.path.join(RESULTS_DIR, "reads_subsampled/subsample_{sample}_R1.fastq")
+        fq_sub=os.path.join(RESULTS_DIR, "reads_subsampled/subsample_{sample}_{number}.fastq")
     conda: os.path.join(ENV_DIR, "annotation.yaml")
     threads: config['seqkit']['threads']
     shell:
         "seqkit sample -j {threads} -p 0.1 -s 42 -o {output.fq_sub} {input.fq}"
 
-rule subsample_reads_r2:
+rule minimap2_marker_mapping:
     input:
-        fq=os.path.join(READS_DIR, "{sample}_R2.fastq")
-    output:
-        fq_sub=os.path.join(RESULTS_DIR, "reads_subsampled/subsample_{sample}_R2.fastq")
-    conda: os.path.join(ENV_DIR, "annotation.yaml")
-    threads: config['seqkit']['threads']
-    shell:
-        "seqkit sample -j {threads} -p 0.1 -s 42 -o {output.fq_sub} {input.fq}"
-
-rule minimap2_map_uscg:
-    input:
-        ref=os.path.join(RESULTS_DIR, "hmm_sequences/uscg_genes_{sample}.fna"),
+        ref=os.path.join(RESULTS_DIR, "hmm_sequences/{marker}_genes_{sample}.fna"),
         r1=os.path.join(RESULTS_DIR, "reads_subsampled/subsample_{sample}_R1.fastq"),
         r2=os.path.join(RESULTS_DIR, "reads_subsampled/subsample_{sample}_R2.fastq")
     output:
-        bam=os.path.join(RESULTS_DIR, "mapping/minimap2_{sample}_mapped_on_uscg.bam")
+        bam=os.path.join(RESULTS_DIR, "mapping/minimap2_{sample}_mapped_on_{marker}.bam")
     conda: os.path.join(ENV_DIR, "mapping.yaml")
     threads: config['minimap2']['threads']
     shell:
         "minimap2 -ax sr -I 16G -t {threads} {input.ref} {input.r1} {input.r2} | "
-        "samtools view -@ {threads} -bS | "
-        "samtools sort -@ {threads} -o {output.bam}"
-
-rule minimap2_map_mcp:
-    input:
-        ref=os.path.join(RESULTS_DIR, "hmm_sequences/mcp_genes_{sample}.fna"),
-        r1=os.path.join(RESULTS_DIR, "reads_subsampled/subsample_{sample}_R1.fastq"),
-        r2=os.path.join(RESULTS_DIR, "reads_subsampled/subsample_{sample}_R2.fastq")
-    output:
-        bam=os.path.join(RESULTS_DIR, "mapping/minimap2_{sample}_mapped_on_mcp.bam")
-    conda: os.path.join(ENV_DIR, "mapping.yaml")
-    threads: config['minimap2']['threads']
-    shell:
-        "minimap2 -ax sr -I 16G -t {threads} {input.ref} {input.r1} {input.r2} | "
-        "samtools view -@ {threads} -bS | "
+        "samtools view -@ {threads} -bS -F 4 | "
         "samtools sort -@ {threads} -o {output.bam}"
 
 # 5. Calculate coverage of marker genes
-rule coverm_uscg:
+rule coverm_marker:
     input:
         bam=os.path.join(RESULTS_DIR, "mapping/minimap2_{sample}_mapped_on_uscg.bam")
     output:
@@ -154,20 +152,7 @@ rule coverm_uscg:
     conda: os.path.join(ENV_DIR, "mapping.yaml")
     threads: config['coverm']['threads']
     shell:
-        "coverm contig -t {threads} -b {input.bam} -m 'rpkm' --min-read-percent-identity {params.min_read_identity} --min-read-aligned-percent {params.min_read_coverage} -o {output.out}"
-
-rule coverm_mcp:
-    input:
-        bam=os.path.join(RESULTS_DIR, "mapping/minimap2_{sample}_mapped_on_mcp.bam")
-    output:
-        out=os.path.join(RESULTS_DIR, "coverm/mcp_coverm_mean_{sample}.out")
-    params:
-        min_read_identity=95,
-        min_read_coverage=75
-    conda: os.path.join(ENV_DIR, "mapping.yaml")
-    threads: config['coverm']['threads']
-    shell:
-        "coverm contig -t {threads} -b {input.bam} -m 'rpkm' --min-read-percent-identity {params.min_read_identity} --min-read-aligned-percent {params.min_read_coverage} -o {output.out}"
+        "coverm contig -t {threads} -b {input.bam} -m 'mean' --min-read-percent-identity {params.min_read_identity} --min-read-aligned-percent {params.min_read_coverage} -o {output.out}"
 
 # 6. Calculate counts per sample
 rule counts_per_category_uscg:
