@@ -12,7 +12,8 @@ ASSEMBLY_DIR = config["assembly_dir"]
 RESULTS_DIR = config["results_dir"]
 
 # Samples
-SAMPLES = list(glob_wildcards(os.path.join(ASSEMBLY_DIR, "{sample}.fa")))[0]
+SAMPLES = list(glob_wildcards(os.path.join(ASSEMBLY_DIR, "{sample}.fna")))[0]
+print(SAMPLES)
 
 ### Rules to include
 # Function to recursively include all .smk files

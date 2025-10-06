@@ -1,7 +1,7 @@
 # 1. Protein prediction
 rule pyrodigal:
     input:
-        fa=os.path.join(ASSEMBLY_DIR, "{sample}.fa")
+        fa=os.path.join(ASSEMBLY_DIR, "{sample}.fna")
     output:
         proteins=os.path.join(RESULTS_DIR, "proteins/proteins_{sample}.faa"),
         genes=os.path.join(RESULTS_DIR, "genes/genes_{sample}.fna")
@@ -96,9 +96,9 @@ rule extract_sequences_mcp:
 # 4. Subsample reads and map to extracted genes
 rule subsample_reads_r1:
     input:
-        fq=os.path.join(READS_DIR, "{sample}_R1_cutadapt.fastq.gz")
+        fq=os.path.join(READS_DIR, "{sample}_R1.fastq")
     output:
-        fq_sub=os.path.join(RESULTS_DIR, "reads_subsampled/subsample_{sample}_R1_cutadapt.fastq.gz")
+        fq_sub=os.path.join(RESULTS_DIR, "reads_subsampled/subsample_{sample}_R1.fastq")
     conda: os.path.join(ENV_DIR, "annotation.yaml")
     threads: config['seqkit']['threads']
     shell:
@@ -106,9 +106,9 @@ rule subsample_reads_r1:
 
 rule subsample_reads_r2:
     input:
-        fq=os.path.join(READS_DIR, "{sample}_R2_cutadapt.fastq.gz")
+        fq=os.path.join(READS_DIR, "{sample}_R2.fastq")
     output:
-        fq_sub=os.path.join(RESULTS_DIR, "reads_subsampled/subsample_{sample}_R2_cutadapt.fastq.gz")
+        fq_sub=os.path.join(RESULTS_DIR, "reads_subsampled/subsample_{sample}_R2.fastq")
     conda: os.path.join(ENV_DIR, "annotation.yaml")
     threads: config['seqkit']['threads']
     shell:
@@ -117,29 +117,29 @@ rule subsample_reads_r2:
 rule minimap2_map_uscg:
     input:
         ref=os.path.join(RESULTS_DIR, "hmm_sequences/uscg_genes_{sample}.fna"),
-        r1=os.path.join(RESULTS_DIR, "reads_subsampled/subsample_{sample}_R1_cutadapt.fastq.gz"),
-        r2=os.path.join(RESULTS_DIR, "reads_subsampled/subsample_{sample}_R2_cutadapt.fastq.gz")
+        r1=os.path.join(RESULTS_DIR, "reads_subsampled/subsample_{sample}_R1.fastq"),
+        r2=os.path.join(RESULTS_DIR, "reads_subsampled/subsample_{sample}_R2.fastq")
     output:
         bam=os.path.join(RESULTS_DIR, "mapping/minimap2_{sample}_mapped_on_uscg.bam")
     conda: os.path.join(ENV_DIR, "mapping.yaml")
     threads: config['minimap2']['threads']
     shell:
         "minimap2 -ax sr -I 16G -t {threads} {input.ref} {input.r1} {input.r2} | "
-        "samtools view -@ {threads} -bS -F 4 | "
+        "samtools view -@ {threads} -bS | "
         "samtools sort -@ {threads} -o {output.bam}"
 
 rule minimap2_map_mcp:
     input:
         ref=os.path.join(RESULTS_DIR, "hmm_sequences/mcp_genes_{sample}.fna"),
-        r1=os.path.join(RESULTS_DIR, "reads_subsampled/subsample_{sample}_R1_cutadapt.fastq.gz"),
-        r2=os.path.join(RESULTS_DIR, "reads_subsampled/subsample_{sample}_R2_cutadapt.fastq.gz")
+        r1=os.path.join(RESULTS_DIR, "reads_subsampled/subsample_{sample}_R1.fastq"),
+        r2=os.path.join(RESULTS_DIR, "reads_subsampled/subsample_{sample}_R2.fastq")
     output:
         bam=os.path.join(RESULTS_DIR, "mapping/minimap2_{sample}_mapped_on_mcp.bam")
     conda: os.path.join(ENV_DIR, "mapping.yaml")
     threads: config['minimap2']['threads']
     shell:
         "minimap2 -ax sr -I 16G -t {threads} {input.ref} {input.r1} {input.r2} | "
-        "samtools view -@ {threads} -bS -F 4 | "
+        "samtools view -@ {threads} -bS | "
         "samtools sort -@ {threads} -o {output.bam}"
 
 # 5. Calculate coverage of marker genes
@@ -148,20 +148,26 @@ rule coverm_uscg:
         bam=os.path.join(RESULTS_DIR, "mapping/minimap2_{sample}_mapped_on_uscg.bam")
     output:
         out=os.path.join(RESULTS_DIR, "coverm/uscg_coverm_mean_{sample}.out")
+    params:
+        min_read_identity=95,
+        min_read_coverage=75
     conda: os.path.join(ENV_DIR, "mapping.yaml")
     threads: config['coverm']['threads']
     shell:
-        "coverm contig -t {threads} -b {input.bam} -m 'mean' -o {output.out}"
+        "coverm contig -t {threads} -b {input.bam} -m 'rpkm' --min-read-percent-identity {params.min_read_identity} --min-read-aligned-percent {params.min_read_coverage} -o {output.out}"
 
 rule coverm_mcp:
     input:
         bam=os.path.join(RESULTS_DIR, "mapping/minimap2_{sample}_mapped_on_mcp.bam")
     output:
         out=os.path.join(RESULTS_DIR, "coverm/mcp_coverm_mean_{sample}.out")
+    params:
+        min_read_identity=95,
+        min_read_coverage=75
     conda: os.path.join(ENV_DIR, "mapping.yaml")
     threads: config['coverm']['threads']
     shell:
-        "coverm contig -t {threads} -b {input.bam} -m 'mean' -o {output.out}"
+        "coverm contig -t {threads} -b {input.bam} -m 'rpkm' --min-read-percent-identity {params.min_read_identity} --min-read-aligned-percent {params.min_read_coverage} -o {output.out}"
 
 # 6. Calculate counts per sample
 rule counts_per_category_uscg:
@@ -171,11 +177,11 @@ rule counts_per_category_uscg:
     output:
         hits=temporary(os.path.join(RESULTS_DIR, "headerless_uscg_hits_{sample}.tsv")),
         merged=temporary(os.path.join(RESULTS_DIR, "merged_{sample}.tsv")),
-        counts=os.path.join(RESULTS_DIR, "counts_per_category_uscg_{sample}.tsv")
+        counts=os.path.join(RESULTS_DIR, "counts/counts_per_category_uscg_{sample}.tsv")
     shell:
         r"""
         grep -v '^#' {input.tbl} | awk '{{print $1, $3}}' > {output.hits} && \
-        awk 'NR==FNR{{a[$1]=$2; next}} NR==1{{print $0, \"Category\"; next}} {{print $0, a[$1]}}' {output.hits} {input.coverm} > {output.merged} && \
+        awk 'NR==FNR{{a[$1]=$2; next}} NR==1{{print $0, "Category"; next}} {{print $0, a[$1]}}' {output.hits} {input.coverm} > {output.merged} && \
         awk '
         BEGIN {{
             OFS="\t"
@@ -197,17 +203,28 @@ rule counts_per_category_uscg:
         }}' {output.merged} > {output.counts}
         """
 
+rule counts_mcp:
+    input:
+        coverm=os.path.join(RESULTS_DIR, "coverm/mcp_coverm_mean_{sample}.out")
+    output:
+        counts=os.path.join(RESULTS_DIR, "counts/counts_mcp_{sample}.tsv")
+    shell:
+        r"""
+        awk 'NR>1 {{sum+=$2}} END {{print "{wildcards.sample}\t" sum}}' {input.coverm} > {output.counts}
+        """
+
 # 7. Summarize statistics across samples
 rule summary_stats_uscg:
     input:
-        counts=expand(os.path.join(RESULTS_DIR, "counts_per_category_uscg_{sample}.tsv"), sample=SAMPLES)
+        counts=expand(os.path.join(RESULTS_DIR, "counts/counts_per_category_uscg_{sample}.tsv"), sample=SAMPLES)
     output:
         summary=os.path.join(RESULTS_DIR, "summary_stats_uscg.tsv")
     shell:
         r"""
         echo -e "Sample\tMaxUSCG\tMeanUSCG\tMedianUSCG" > {output.summary}
         for sample in {input.counts}; do
-            vals=($(awk 'NR>1 {{print $2}}' ${sample} | sort -n))
+            name=$(basename ${{sample}} | sed 's/counts_per_category_uscg_//g' | sed 's/.tsv//g')
+            vals=($(awk 'NR>1 {{print $2}}' ${{sample}} | sort -n))
             n=${{#vals[@]}}
             if [ $n -gt 0 ]; then
                 sum=0
@@ -219,37 +236,26 @@ rule summary_stats_uscg:
                 if (( n % 2 == 1 )); then
                     median=${{vals[$((n/2))]}}
                 else
-                    median=$(echo "scale=4; (${vals[$((n/2 - 1))]} + ${vals[$((n/2))]}) / 2" | bc)
+                    median=$(echo "scale=4; (${{vals[$((n/2 - 1))]}} + ${{vals[$((n/2))]}}) / 2" | bc)
                 fi
             else
                 mean=0
                 maxv=0
                 median=0
             fi
-            echo -e "{wildcards.sample}\t${{maxv}}\t${{mean}}\t${{median}}" >> {output.summary}
+            echo -e "${{name}}\t${{maxv}}\t${{mean}}\t${{median}}" >> {output.summary}
         done
         """
 
 rule summary_stats_mcp:
     input:
-        coverm=expand(os.path.join(RESULTS_DIR, "coverm/mcp_coverm_mean_{sample}.out"), sample=SAMPLES)
+        counts=expand(os.path.join(RESULTS_DIR, "counts/counts_mcp_{sample}.tsv"), sample=SAMPLES)
     output:
         summary=os.path.join(RESULTS_DIR, "summary_stats_mcp.tsv")
     shell:
         r"""
         echo -e "Sample\tSumMCP" > {output.summary}
-        for sample in {input.coverm}; do
-            total=0
-            while read -r line; do
-                if [[ ! $line =~ ^# ]]; then
-                    parts=($line)
-                    if [[ ${#parts[@]} -gt 1 ]]; then
-                        total=$(echo "$total + ${parts[1]}" | bc)
-                    fi
-                fi
-            done < ${sample}
-            echo -e "{wildcards.sample}\t$total" >> {output.summary}
-        done
+        cat {input.counts} >> {output.summary}
         """
 
 rule vmr_calculation:
@@ -272,6 +278,6 @@ rule vmr_calculation:
                 if (max_uscg > 0) {{ vmr_max = sum_mcp / max_uscg }} else {{ vmr_max = "NA" }}
                 if (mean_uscg > 0) {{ vmr_mean = sum_mcp / mean_uscg }} else {{ vmr_mean = "NA" }}
                 if (median_uscg > 0) {{ vmr_median = sum_mcp / median_uscg }} else {{ vmr_median = "NA" }}
-                print sample, max_uscg, mean_uscg, median_uscg, sum_mcp, vmr_max, vmr_mean, vmr_median
+                print sample, sum_mcp, max_uscg, mean_uscg, median_uscg, vmr_max, vmr_mean, vmr_median
             }}' >> {output.vmr}
         """
