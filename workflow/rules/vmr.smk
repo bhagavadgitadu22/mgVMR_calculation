@@ -141,24 +141,73 @@ rule minimap2_marker_mapping:
         "samtools sort -@ {threads} -o {output.bam}"
 
 # 5. Calculate coverage of marker genes
-rule coverm_marker:
+rule coverm_mean_marker:
     input:
-        bam=os.path.join(RESULTS_DIR, "mapping/minimap2_{sample}_mapped_on_uscg.bam")
+        bam=os.path.join(RESULTS_DIR, "mapping/minimap2_{sample}_mapped_on_{marker}.bam")
     output:
-        out=os.path.join(RESULTS_DIR, "coverm/uscg_coverm_mean_{sample}.out")
+        out=os.path.join(RESULTS_DIR, "coverm/{marker}_coverm_mean_{sample}.out")
     params:
-        min_read_identity=95,
+        min_read_identity=90,
         min_read_coverage=75
     conda: os.path.join(ENV_DIR, "mapping.yaml")
     threads: config['coverm']['threads']
     shell:
         "coverm contig -t {threads} -b {input.bam} -m 'mean' --min-read-percent-identity {params.min_read_identity} --min-read-aligned-percent {params.min_read_coverage} -o {output.out}"
 
+rule coverm_length_marker:
+    input:
+        bam=os.path.join(RESULTS_DIR, "mapping/minimap2_{sample}_mapped_on_{marker}.bam")
+    output:
+        out=os.path.join(RESULTS_DIR, "coverm/{marker}_coverm_length_{sample}.out")
+    params:
+        min_read_identity=90,
+        min_read_coverage=75
+    conda: os.path.join(ENV_DIR, "mapping.yaml")
+    threads: config['coverm']['threads']
+    shell:
+        "coverm contig -t {threads} -b {input.bam} -m 'length' --min-read-percent-identity {params.min_read_identity} --min-read-aligned-percent {params.min_read_coverage} -o {output.out}"
+
+rule coverm_count_marker:
+    input:
+        bam=os.path.join(RESULTS_DIR, "mapping/minimap2_{sample}_mapped_on_{marker}.bam")
+    output:
+        out=os.path.join(RESULTS_DIR, "coverm/{marker}_coverm_count_{sample}.out")
+    params:
+        min_read_identity=90,
+        min_read_coverage=75
+    conda: os.path.join(ENV_DIR, "mapping.yaml")
+    threads: config['coverm']['threads']
+    shell:
+        "coverm contig -t {threads} -b {input.bam} -m 'count' --min-read-percent-identity {params.min_read_identity} --min-read-aligned-percent {params.min_read_coverage} -o {output.out}"
+
+rule calculate_rpkm_marker:
+    input:
+        length_file=os.path.join(RESULTS_DIR, "coverm/{marker}_coverm_length_{sample}.out"),
+        count_file=os.path.join(RESULTS_DIR, "coverm/{marker}_coverm_count_{sample}.out"),
+        reads_R1=os.path.join(RESULTS_DIR, "reads_subsampled/subsample_{sample}_R1.fastq"),
+        reads_R2=os.path.join(RESULTS_DIR, "reads_subsampled/subsample_{sample}_R2.fastq")
+    output: os.path.join(RESULTS_DIR, "coverm/{marker}_rpkm_{sample}.tsv")
+    shell:
+        r"""
+        total_reads=$(( $(wc -l < {input.r1})/4 + $(wc -l < {input.r2})/4 ))
+        paste {input.length} {input.count} | awk -v total_reads=$total_reads 'BEGIN{{OFS="\t"}} {{
+            if($1==$3) {{ rpkm = ($4 * 1e9)/($2 * total_reads); print $1,$2,$4,rpkm }}
+        }}' > {output}
+        """
+
+rule coverm_rpkm_marker:
+    input: os.path.join(RESULTS_DIR, "coverm/{marker}_rpkm_{sample}.tsv")
+    output: os.path.join(RESULTS_DIR, "coverm/{marker}_rpkm_{sample}.out")
+    shell:
+        r"""
+        cut -d 1,4 {input} > {output}
+        """
+
 # 6. Calculate counts per sample
 rule counts_per_category_uscg:
     input:
         tbl=os.path.join(RESULTS_DIR, "hmm/uscg_hits_{sample}.tbl"),
-        coverm=os.path.join(RESULTS_DIR, "coverm/uscg_coverm_mean_{sample}.out")
+        coverm=os.path.join(RESULTS_DIR, "coverm/uscg_coverm_rpkm_{sample}.out")
     output:
         hits=temporary(os.path.join(RESULTS_DIR, "headerless_uscg_hits_{sample}.tsv")),
         merged=temporary(os.path.join(RESULTS_DIR, "merged_{sample}.tsv")),
@@ -190,7 +239,7 @@ rule counts_per_category_uscg:
 
 rule counts_mcp:
     input:
-        coverm=os.path.join(RESULTS_DIR, "coverm/mcp_coverm_mean_{sample}.out")
+        coverm=os.path.join(RESULTS_DIR, "coverm/mcp_coverm_rpkm_{sample}.out")
     output:
         counts=os.path.join(RESULTS_DIR, "counts/counts_mcp_{sample}.tsv")
     shell:
