@@ -1,34 +1,49 @@
 # Unzip inputs
 rule unzip_assembly:
     input:
-        fa=lambda wildcards: next(
-            f for f in [
+        lambda wildcards: next(
+            (f for f in [
                 os.path.join(ASSEMBLY_DIR, f"{wildcards.sample}.fa.gz"),
                 os.path.join(ASSEMBLY_DIR, f"{wildcards.sample}.fna.gz"),
-                os.path.join(ASSEMBLY_DIR, f"{wildcards.sample}.fasta.gz")
-            ] if os.path.exists(f)
-        )
-    output: fa=os.path.join(ASSEMBLY_DIR, "{sample}.fna")
-    shell:
-        "gunzip -c {input.fa} > {output.fa}"
-
-rule normalize_extension_assembly:
-    input:
-        lambda wildcards: next(
-            f for f in [
+                os.path.join(ASSEMBLY_DIR, f"{wildcards.sample}.fasta.gz"),
                 os.path.join(ASSEMBLY_DIR, f"{wildcards.sample}.fa"),
+                os.path.join(ASSEMBLY_DIR, f"{wildcards.sample}.fna"),
                 os.path.join(ASSEMBLY_DIR, f"{wildcards.sample}.fasta")
-            ] if os.path.exists(f)
+            ] if os.path.exists(f)),
+            None
         )
-    output: os.path.join(ASSEMBLY_DIR, "{sample}.fna")
+    output:
+        fa=os.path.join(ASSEMBLY_DIR, "{sample}.fna")
     shell:
-        "cp {input} {output}"
+        """
+        if [[ "{input}" == *.gz ]]; then
+            gunzip -c {input} > {output.fa}
+        else
+            cp {input} {output.fa}
+        fi
+        """
 
 rule unzip_reads:
-    input: os.path.join(READS_DIR, "{sample}_{number}.fastq.gz")
-    output: os.path.join(READS_DIR, "{sample}_{number}.fastq")
+    input:
+        lambda wildcards: next(
+            (f for f in [
+                os.path.join(READS_DIR, f"{wildcards.sample}_{wildcards.number}.fastq.gz"),
+                os.path.join(READS_DIR, f"{wildcards.sample}_{wildcards.number}.fq.gz"),
+                os.path.join(READS_DIR, f"{wildcards.sample}_{wildcards.number}.fastq"),
+                os.path.join(READS_DIR, f"{wildcards.sample}_{wildcards.number}.fq")
+            ] if os.path.exists(f)),
+            None
+        )
+    output:
+        os.path.join(READS_DIR, "{sample}_{number}.fastq")
     shell:
-        "gunzip -c {input} > {output}"
+        """
+        if [[ "{input}" == *.gz ]]; then
+            gunzip -c {input} > {output}
+        else
+            cp {input} {output}
+        fi
+        """
 
 # Protein prediction
 rule pyrodigal:
