@@ -5,11 +5,13 @@ results_dir: "/scratch/boutroux/VMR_results"
 
 ### TO-MODIFY: Threads
 pyrodigal:
-  threads: 20
+  threads: 8
 hmmsearch:
   threads: 8
 seqkit:
   threads: 4
+genomad:
+  threads: 8
 minimap2:
   threads: 8
 coverm:

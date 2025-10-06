@@ -126,9 +126,7 @@ rule filter_length_2000:
 
 rule db_genomad:
     output: os.path.join(RESULTS_DIR, "dbs", "genomad_db", "genomad_marker_metadata.tsv")
-    log: os.path.join(RESULTS_DIR, "logs/genomad_db.log")
     conda: os.path.join(ENV_DIR, "genomad.yaml")
-    message: "Downloading the geNomad database"
     shell:
         """
         (date && cd $(dirname $(dirname {output})) &&
@@ -140,18 +138,15 @@ rule genomad:
     output: os.path.join(RESULTS_DIR, "genomad", "geNomad_{sample}.filtered2000.renamed.contigs", "{sample}.filtered2000.renamed.contigs_summary", "{sample}.filtered2000.renamed.contigs_virus.fna")
     input: 
         assembly = os.path.join(RESULTS_DIR, "genomad", "filtered2000_{sample}.fna"),
-        db = os.path.join(RESULTS_DIR, "dbs", "genomad_db", "genomad_marker_metadata.tsv"),
-    params:
-        virome = lambda wildcards: "metagenome" if wildcards.type == "VG" else "virome"
+        db = os.path.join(RESULTS_DIR, "dbs", "genomad_db", "genomad_marker_metadata.tsv")
     conda: os.path.join(ENV_DIR, "genomad.yaml")
     threads: config['genomad']['threads']
-    message: "Finding extra viruses with geNomad"
     shell:
-        "(date && genomad end-to-end --threads {threads} --enable-score-calibration --composition {params.virome} --max-fdr 0.05 {input.assembly} $(dirname $(dirname {output})) $(dirname {input.db}) && date) &> {log}"
+        "(date && genomad end-to-end --threads {threads} --enable-score-calibration --max-fdr 0.05 {input.assembly} $(dirname $(dirname {output})) $(dirname {input.db}) && date) &> {log}"
 
 rule extract_viruses:
     input:
-        genomad = s.path.join(RESULTS_DIR, "viruses", "genomad", "geNomad_{sample}.filtered2000.renamed.contigs", "{sample}.filtered2000.renamed.contigs_summary", "{sample}.filtered2000.renamed.contigs_virus.fna")
+        genomad = os.path.join(RESULTS_DIR, "viruses", "genomad", "geNomad_{sample}.filtered2000.renamed.contigs", "{sample}.filtered2000.renamed.contigs_summary", "{sample}.filtered2000.renamed.contigs_virus.fna")
     output:
         fna=os.path.join(RESULTS_DIR, "sequences/viruses_genes_{sample}.fna")
     conda: os.path.join(ENV_DIR, "annotation.yaml")
@@ -297,9 +292,9 @@ rule counts_virus:
 # Summarize statistics across samples
 rule summary_stats_uscg:
     input:
-        counts=expand(os.path.join(RESULTS_DIR, "counts/counts_per_category_uscg_{sample}_with_{method}.tsv"), sample=SAMPLES)
+        counts=expand(os.path.join(RESULTS_DIR, "counts/counts_per_category_uscg_{sample}_with_{{method}}.tsv"), sample=SAMPLES)
     output:
-        summary=os.path.join(RESULTS_DIR, "summary_stats_uscg_with_{method}.tsv")
+        summary=os.path.join(RESULTS_DIR, "summary_stats_hosts_with_uscg_and_{method}.tsv")
     shell:
         r"""
         echo -e "Sample\tMaxUSCG\tMeanUSCG\tMedianUSCG" > {output.summary}
@@ -330,9 +325,9 @@ rule summary_stats_uscg:
 
 rule summary_stats_mcp:
     input:
-        counts=expand(os.path.join(RESULTS_DIR, "counts/counts_{marker}_{sample}_with_{method}.tsv"), sample=SAMPLES)
+        counts=expand(os.path.join(RESULTS_DIR, "counts/counts_{{marker}}_{sample}_with_{{method}}.tsv"), sample=SAMPLES)
     output:
-        summary=os.path.join(RESULTS_DIR, "summary_stats_{marker}_with_{method}.tsv")
+        summary=os.path.join(RESULTS_DIR, "summary_stats_virus_with_{marker}_and_{method}.tsv")
     shell:
         r"""
         echo -e "Sample\tSumMCP" > {output.summary}
@@ -341,8 +336,8 @@ rule summary_stats_mcp:
 
 rule vmr_calculation_with_mcp:
     input:
-        uscg_summary=os.path.join(RESULTS_DIR, "summary_stats_uscg_with_{method}.tsv"),
-        mcp_summary=os.path.join(RESULTS_DIR, "summary_stats_mcp_with_{method}.tsv")
+        uscg_summary=os.path.join(RESULTS_DIR, "summary_stats_hosts_with_uscg_and_{method}.tsv"),
+        mcp_summary=os.path.join(RESULTS_DIR, "summary_stats_virus_with_mcp_and_{method}.tsv")
     output:
         vmr=os.path.join(RESULTS_DIR, "vmr_results_with_mcp_and_{method}.tsv")
     shell:
@@ -363,7 +358,7 @@ rule vmr_calculation_with_mcp:
             }}' >> {output.vmr}
         """
 
-rule vmr_calculation_with_mcp:
+rule vmr_calculation_with_virus:
     input:
         uscg_summary=os.path.join(RESULTS_DIR, "summary_stats_uscg_with_{method}.tsv"),
         mcp_summary=os.path.join(RESULTS_DIR, "summary_stats_virus_with_{method}.tsv")
