@@ -1,4 +1,4 @@
-# 0. Unzip inputs
+# Unzip inputs
 rule unzip_assembly:
     input:
         fa=lambda wildcards: next(
@@ -30,7 +30,7 @@ rule unzip_reads:
     shell:
         "gunzip -c {input} > {output}"
 
-# 1. Protein prediction
+# Protein prediction
 rule pyrodigal:
     input:
         fa=os.path.join(ASSEMBLY_DIR, "{sample}.fna")
@@ -42,7 +42,7 @@ rule pyrodigal:
     shell:
         "pyrodigal -j {threads} -i {input.fa} -a {output.proteins} -d {output.genes} -p meta"
 
-# 2. HMM search for USCGs and MCPs
+# HMM search for USCGs and MCPs
 rule hmmsearch_uscg:
     input:
         proteins=os.path.join(RESULTS_DIR, "proteins/proteins_{sample}.faa"),
@@ -67,7 +67,7 @@ rule hmmsearch_mcp:
     shell:
         "hmmsearch -E 1e-11 --cpu {threads} --tblout {output.tbl} {input.mcp} {input.proteins} > {output.txt}"
 
-# 3. Extracting sequences of identified marker genes (keeping only the best hit for MCPs)
+# Extracting sequences of identified marker genes (keeping only the best hit for MCPs)
 rule extract_ids_uscg:
     input:
         tbl=os.path.join(RESULTS_DIR, "hmm/uscg_hits_{sample}.tbl")
@@ -110,12 +110,55 @@ rule extract_sequences_marker:
         genes=os.path.join(RESULTS_DIR, "genes/genes_{sample}.fna"),
         ids=os.path.join(RESULTS_DIR, "hmm/{marker}_hits_{sample}_ids.txt")
     output:
-        fna=os.path.join(RESULTS_DIR, "hmm_sequences/{marker}_genes_{sample}.fna")
+        fna=os.path.join(RESULTS_DIR, "hmm/{marker}_genes_{sample}.fna")
     conda: os.path.join(ENV_DIR, "annotation.yaml")
     shell:
         "seqtk subseq {input.genes} {input.ids} | seqkit rmdup -n - > {output.fna}"
 
-# 4. Subsample reads and map to extracted genes
+# Find viral contigs within the assembly
+rule filter_length_2000:
+    output: os.path.join(RESULTS_DIR, "genomad", "filtered2000_{sample}.fna")
+    input: os.path.join(ASSEMBLY_DIR, "{sample}.fna")
+    conda: os.path.join(ENV_DIR, "annotation.yaml")
+    threads: config['seqkit']['threads']
+    shell:
+        """(date && seqkit seq -j {threads} --remove-gaps -o {output} -m 2000 {input} && date) &> {log}"""
+
+rule db_genomad:
+    output: os.path.join(RESULTS_DIR, "dbs", "genomad_db", "genomad_marker_metadata.tsv")
+    log: os.path.join(RESULTS_DIR, "logs/genomad_db.log")
+    conda: os.path.join(ENV_DIR, "genomad.yaml")
+    message: "Downloading the geNomad database"
+    shell:
+        """
+        (date && cd $(dirname $(dirname {output})) &&
+        wget -nc https://zenodo.org/records/14886553/files/genomad_db_v1.9.tar.gz && 
+        tar --skip-old-files -zxvf genomad_db_v1.9.tar.gz && date) &> {log}
+        """
+
+rule genomad:
+    output: os.path.join(RESULTS_DIR, "genomad", "geNomad_{sample}.filtered2000.renamed.contigs", "{sample}.filtered2000.renamed.contigs_summary", "{sample}.filtered2000.renamed.contigs_virus.fna")
+    input: 
+        assembly = os.path.join(RESULTS_DIR, "genomad", "filtered2000_{sample}.fna"),
+        db = os.path.join(RESULTS_DIR, "dbs", "genomad_db", "genomad_marker_metadata.tsv"),
+    params:
+        virome = lambda wildcards: "metagenome" if wildcards.type == "VG" else "virome"
+    conda: os.path.join(ENV_DIR, "genomad.yaml")
+    threads: config['genomad']['threads']
+    message: "Finding extra viruses with geNomad"
+    shell:
+        "(date && genomad end-to-end --threads {threads} --enable-score-calibration --composition {params.virome} --max-fdr 0.05 {input.assembly} $(dirname $(dirname {output})) $(dirname {input.db}) && date) &> {log}"
+
+rule extract_viruses:
+    input:
+        genomad = s.path.join(RESULTS_DIR, "viruses", "genomad", "geNomad_{sample}.filtered2000.renamed.contigs", "{sample}.filtered2000.renamed.contigs_summary", "{sample}.filtered2000.renamed.contigs_virus.fna")
+    output:
+        fna=os.path.join(RESULTS_DIR, "sequences/viruses_genes_{sample}.fna")
+    conda: os.path.join(ENV_DIR, "annotation.yaml")
+    shell:
+        "ln -s {input.genomad} > {output.fna}"
+
+# Subsample reads and map to extracted genes
 rule subsample_reads:
     input:
         fq=os.path.join(READS_DIR, "{sample}_{number}.fastq")
@@ -128,7 +171,7 @@ rule subsample_reads:
 
 rule minimap2_marker_mapping:
     input:
-        ref=os.path.join(RESULTS_DIR, "hmm_sequences/{marker}_genes_{sample}.fna"),
+        ref=os.path.join(RESULTS_DIR, "sequences/{marker}_genes_{sample}.fna"),
         r1=os.path.join(RESULTS_DIR, "reads_subsampled/subsample_{sample}_R1.fastq"),
         r2=os.path.join(RESULTS_DIR, "reads_subsampled/subsample_{sample}_R2.fastq")
     output:
@@ -140,45 +183,49 @@ rule minimap2_marker_mapping:
         "samtools view -@ {threads} -bS -F 4 | "
         "samtools sort -@ {threads} -o {output.bam}"
 
-# 5. Calculate coverage of marker genes
-#rule coverm_mean_marker:
-#    input:
-#        bam=os.path.join(RESULTS_DIR, "mapping/minimap2_{sample}_mapped_on_{marker}.bam")
-#    output:
-#        out=os.path.join(RESULTS_DIR, "coverm/{marker}_coverm_mean_{sample}.out")
-#    params:
-#        min_read_identity=90,
-#        min_read_coverage=75
-#    conda: os.path.join(ENV_DIR, "mapping.yaml")
-#    threads: config['coverm']['threads']
-#    shell:
-#        "coverm contig -t {threads} -b {input.bam} -m 'mean' --min-read-percent-identity {params.min_read_identity} --min-read-aligned-percent {params.min_read_coverage} -o {output.out}"
+# Calculate coverage of marker genes
+rule coverm_filter_marker:
+    input:
+        bam=os.path.join(RESULTS_DIR, "mapping/minimap2_{sample}_mapped_on_{marker}.bam")
+    output:
+        out=os.path.join(RESULTS_DIR, "mapping/minimap2_{sample}_mapped_on_{marker}_filtered.bam")
+    params:
+        min_read_identity=90,
+        min_read_coverage=75
+    conda: os.path.join(ENV_DIR, "mapping.yaml")
+    threads: config['coverm']['threads']
+    shell:
+        "coverm filter -t {threads} -b {input.bam} --min-read-percent-identity {params.min_read_identity} --min-read-aligned-percent {params.min_read_coverage} -o {output.out}"
+
+rule coverm_mean_marker:
+    input:
+        bam=os.path.join(RESULTS_DIR, "mapping/minimap2_{sample}_mapped_on_{marker}_filtered.bam")
+    output:
+        out=os.path.join(RESULTS_DIR, "coverm/{marker}_coverm_mean_{sample}.out")
+    conda: os.path.join(ENV_DIR, "mapping.yaml")
+    threads: config['coverm']['threads']
+    shell:
+        "coverm contig -t {threads} -b {input.bam} -m 'mean' -o {output.out}"
 
 rule coverm_length_marker:
     input:
-        bam=os.path.join(RESULTS_DIR, "mapping/minimap2_{sample}_mapped_on_{marker}.bam")
+        bam=os.path.join(RESULTS_DIR, "mapping/minimap2_{sample}_mapped_on_{marker}_filtered.bam")
     output:
         out=os.path.join(RESULTS_DIR, "coverm/{marker}_coverm_length_{sample}.out")
-    params:
-        min_read_identity=90,
-        min_read_coverage=75
     conda: os.path.join(ENV_DIR, "mapping.yaml")
     threads: config['coverm']['threads']
     shell:
-        "coverm contig -t {threads} -b {input.bam} -m 'length' --min-read-percent-identity {params.min_read_identity} --min-read-aligned-percent {params.min_read_coverage} -o {output.out}"
+        "coverm contig -t {threads} -b {input.bam} -m 'length' -o {output.out}"
 
 rule coverm_count_marker:
     input:
-        bam=os.path.join(RESULTS_DIR, "mapping/minimap2_{sample}_mapped_on_{marker}.bam")
+        bam=os.path.join(RESULTS_DIR, "mapping/minimap2_{sample}_mapped_on_{marker}_filtered.bam")
     output:
         out=os.path.join(RESULTS_DIR, "coverm/{marker}_coverm_count_{sample}.out")
-    params:
-        min_read_identity=90,
-        min_read_coverage=75
     conda: os.path.join(ENV_DIR, "mapping.yaml")
     threads: config['coverm']['threads']
     shell:
-        "coverm contig -t {threads} -b {input.bam} -m 'count' --min-read-percent-identity {params.min_read_identity} --min-read-aligned-percent {params.min_read_coverage} -o {output.out}"
+        "coverm contig -t {threads} -b {input.bam} -m 'count' -o {output.out}"
 
 rule calculate_rpkm_marker:
     input:
@@ -203,15 +250,15 @@ rule coverm_rpkm_marker:
         cut -f 1,4 {input} > {output}
         """
 
-# 6. Calculate counts per sample
+# Calculate counts per sample
 rule counts_per_category_uscg:
     input:
         tbl=os.path.join(RESULTS_DIR, "hmm/uscg_hits_{sample}.tbl"),
-        coverm=os.path.join(RESULTS_DIR, "coverm/uscg_coverm_rpkm_{sample}.out")
+        coverm=os.path.join(RESULTS_DIR, "coverm/uscg_coverm_{method}_{sample}.out")
     output:
-        hits=temporary(os.path.join(RESULTS_DIR, "headerless_uscg_hits_{sample}.tsv")),
-        merged=temporary(os.path.join(RESULTS_DIR, "merged_{sample}.tsv")),
-        counts=os.path.join(RESULTS_DIR, "counts/counts_per_category_uscg_{sample}.tsv")
+        hits=temporary(os.path.join(RESULTS_DIR, "headerless_uscg_hits_{sample}_with_{method}.tsv")),
+        merged=temporary(os.path.join(RESULTS_DIR, "merged_{sample}_with_{method}.tsv")),
+        counts=os.path.join(RESULTS_DIR, "counts/counts_per_category_uscg_{sample}_with_{method}.tsv")
     shell:
         r"""
         grep -v '^#' {input.tbl} | awk '{{print $1, $3}}' > {output.hits} && \
@@ -237,22 +284,22 @@ rule counts_per_category_uscg:
         }}' {output.merged} > {output.counts}
         """
 
-rule counts_mcp:
+rule counts_virus:
     input:
-        coverm=os.path.join(RESULTS_DIR, "coverm/mcp_coverm_rpkm_{sample}.out")
+        coverm=os.path.join(RESULTS_DIR, "coverm/{marker}_coverm_{method}_{sample}.out")
     output:
-        counts=os.path.join(RESULTS_DIR, "counts/counts_mcp_{sample}.tsv")
+        counts=os.path.join(RESULTS_DIR, "counts/counts_{marker}_{sample}_with_{method}.tsv")
     shell:
         r"""
         awk 'NR>1 {{sum+=$2}} END {{print "{wildcards.sample}\t" sum}}' {input.coverm} > {output.counts}
         """
 
-# 7. Summarize statistics across samples
+# Summarize statistics across samples
 rule summary_stats_uscg:
     input:
-        counts=expand(os.path.join(RESULTS_DIR, "counts/counts_per_category_uscg_{sample}.tsv"), sample=SAMPLES)
+        counts=expand(os.path.join(RESULTS_DIR, "counts/counts_per_category_uscg_{sample}_with_{method}.tsv"), sample=SAMPLES)
     output:
-        summary=os.path.join(RESULTS_DIR, "summary_stats_uscg.tsv")
+        summary=os.path.join(RESULTS_DIR, "summary_stats_uscg_with_{method}.tsv")
     shell:
         r"""
         echo -e "Sample\tMaxUSCG\tMeanUSCG\tMedianUSCG" > {output.summary}
@@ -283,21 +330,21 @@ rule summary_stats_uscg:
 
 rule summary_stats_mcp:
     input:
-        counts=expand(os.path.join(RESULTS_DIR, "counts/counts_mcp_{sample}.tsv"), sample=SAMPLES)
+        counts=expand(os.path.join(RESULTS_DIR, "counts/counts_{marker}_{sample}_with_{method}.tsv"), sample=SAMPLES)
     output:
-        summary=os.path.join(RESULTS_DIR, "summary_stats_mcp.tsv")
+        summary=os.path.join(RESULTS_DIR, "summary_stats_{marker}_with_{method}.tsv")
     shell:
         r"""
         echo -e "Sample\tSumMCP" > {output.summary}
         cat {input.counts} >> {output.summary}
         """
 
-rule vmr_calculation:
+rule vmr_calculation_with_mcp:
     input:
-        uscg_summary=os.path.join(RESULTS_DIR, "summary_stats_uscg.tsv"),
-        mcp_summary=os.path.join(RESULTS_DIR, "summary_stats_mcp.tsv")
+        uscg_summary=os.path.join(RESULTS_DIR, "summary_stats_uscg_with_{method}.tsv"),
+        mcp_summary=os.path.join(RESULTS_DIR, "summary_stats_mcp_with_{method}.tsv")
     output:
-        vmr=os.path.join(RESULTS_DIR, "vmr_results.tsv")
+        vmr=os.path.join(RESULTS_DIR, "vmr_results_with_mcp_and_{method}.tsv")
     shell:
         r"""
         echo -e "Sample\tSumMCP\tMaxUSCG\tMeanUSCG\tMedianUSCG\tVMR_MaxUSCG\tVMR_MeanUSCG\tVMR_MedianUSCG" > {output.vmr}
@@ -315,3 +362,40 @@ rule vmr_calculation:
                 print sample, sum_mcp, max_uscg, mean_uscg, median_uscg, vmr_max, vmr_mean, vmr_median
             }}' >> {output.vmr}
         """
+
+rule vmr_calculation_with_mcp:
+    input:
+        uscg_summary=os.path.join(RESULTS_DIR, "summary_stats_uscg_with_{method}.tsv"),
+        mcp_summary=os.path.join(RESULTS_DIR, "summary_stats_virus_with_{method}.tsv")
+    output:
+        vmr=os.path.join(RESULTS_DIR, "vmr_results_with_virus_and_{method}.tsv")
+    shell:
+        r"""
+        echo -e "Sample\tSumMCP\tMaxUSCG\tMeanUSCG\tMedianUSCG\tVMR_MaxUSCG\tVMR_MeanUSCG\tVMR_MedianUSCG" > {output.vmr}
+        join -1 1 -2 1 {input.mcp_summary} {input.uscg_summary} | awk '
+            BEGIN {{ OFS="\t" }}
+            NR>1 {{
+                sample=$1
+                sum_mcp=$2
+                max_uscg=$3
+                mean_uscg=$4
+                median_uscg=$5
+                if (max_uscg > 0) {{ vmr_max = sum_mcp / max_uscg }} else {{ vmr_max = "NA" }}
+                if (mean_uscg > 0) {{ vmr_mean = sum_mcp / mean_uscg }} else {{ vmr_mean = "NA" }}
+                if (median_uscg > 0) {{ vmr_median = sum_mcp / median_uscg }} else {{ vmr_median = "NA" }}
+                print sample, sum_mcp, max_uscg, mean_uscg, median_uscg, vmr_max, vmr_mean, vmr_median
+            }}' >> {output.vmr}
+        """
+
+# Generate the VMR results for the different methods
+rule vmr_calculation_with_mcp_and_mean:
+    input: os.path.join(RESULTS_DIR, "vmr_results_with_mcp_and_mean.tsv")
+
+rule vmr_calculation_with_mcp_and_rpkm:
+    input: os.path.join(RESULTS_DIR, "vmr_results_with_mcp_and_rpkm.tsv")
+
+rule vmr_calculation_with_virus_and_mean:
+    input: os.path.join(RESULTS_DIR, "vmr_results_with_virus_and_mean.tsv")
+
+rule vmr_calculation_with_virus_and_rpkm:
+    input: os.path.join(RESULTS_DIR, "vmr_results_with_virus_and_rpkm.tsv")
