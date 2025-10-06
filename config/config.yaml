@@ -1,7 +1,7 @@
 ### TO-MODIFY: Location of directories
-reads_dir: "/scratch/boutroux/VMR_reads/"
-assembly_dir: "/scratch/boutroux/VMR_assemblies/"
-results_dir: "/scratch/boutroux/VMR_results/"
+reads_dir: "/scratch/boutroux/VMR_reads"
+assembly_dir: "/scratch/boutroux/VMR_assemblies"
+results_dir: "/scratch/boutroux/VMR_results"
 
 ### TO-MODIFY: Threads
 pyrodigal:
